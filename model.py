@@ -235,7 +235,7 @@ def ResNet18_sigmoid(set_sigmoid=True):
     得到ResNet18_sigmoid
     :return:
     '''
-    return ResNet_sigmoid(BasicBlock, [2, 2, 2, 2],set_sigmoid=set_sigmoid)
+    return ResNet_sigmoid(BasicBlock, [2, 2, 2, 2], set_sigmoid=set_sigmoid)
 
 
 def ResNet34():
@@ -681,9 +681,12 @@ class AutoEncoder_Miao(nn.Module):
         # 不需要顾及z的batch不是偶数的情况,dataset是偶数,batchsize是偶数,所以batch一定是偶数
         '''
         z = self.encoder(x)  # [batch, 64, 8, 8]
-        z = z.reshape(-1, z.shape[1] * 2, z.shape[2], z.shape[3])
+        z = z.reshape(-1, z.shape[1] * 2, z.shape[2], z.shape[3]).detach()
         virtual = self.decoder_virtual(z)
         return virtual
+
+    def generate_virtual_by_add(self, x):
+        pass
 
     def forward(self, x):
         encoded = self.encoder(x)

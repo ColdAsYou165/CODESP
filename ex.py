@@ -423,8 +423,39 @@ for data,label in trainloader_cifar10:
     print(v)
     print(label.shape,v.shape)
     print(label.dtype,v.dtype)'''
-a=torch.range(0,15).reshape(4,4)
-b=torch.randperm(4)
-a=a[b]
-print(b)
+'''real_labels = 0.7 + 0.5 * torch.rand(10)
+fake_labels = 0.3 * torch.rand(10)
+print(real_labels,fake_labels)
+real_label = real_labels[idx % 10]
+fake_label = fake_labels[idx % 10]'''
+'''
+# 画crossentropyloss图
+def cross(x,y):
+    return -1*y*math.log(x)
+a=cross(0.5,0.5)+cross(0.1,0.5)
 print(a)
+def draw_cel():
+
+    import matplotlib.pyplot as plt
+    for x in np.arange(0.1,1,0.01):
+        y=1-x
+        print(x,y)
+        cel=cross(x,0.5)+cross(y,0.5)
+        plt.scatter(x,cel)
+    plt.show()
+draw_cel()'''
+
+#所有pth文件
+import os
+results_root = "../results/train_generate_virtual_by_add"
+a=os.listdir(results_root)
+# [44:52] [57:62]
+list=[]
+for i in a:
+    msel=float(i[44:52])
+    cel=float(i[57:62])
+    if cel<2.7 and msel<0.01:
+        list.append(i)
+print(list)
+print(len(list))
+# ae_miao_trained_by_add_with_mse_and_cel--mse0.034710--cel1.727.pth
