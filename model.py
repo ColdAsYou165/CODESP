@@ -673,7 +673,7 @@ class AutoEncoder_Miao(nn.Module):
         x = self.ct8(x)
         return x
 
-    def generate_virtual(self, x, set_detach=False):
+    def generate_virtual(self, x, set_encoded_detach=False):
         '''
         :param x:一个batch的图像样本,batch必须为整数
         :return: batch/2 个生成的虚假图像
@@ -682,7 +682,7 @@ class AutoEncoder_Miao(nn.Module):
         '''
         z = self.encoder(x)  # [batch, 64, 8, 8]
         z = z.reshape(-1, z.shape[1] * 2, z.shape[2], z.shape[3])
-        if set_detach:
+        if set_encoded_detach:
             z = z.detach()
         virtual = self.decoder_virtual(z)
         return virtual

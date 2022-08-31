@@ -18,18 +18,19 @@ import torchvision.transforms as transforms
 # 尽量只用这两个
 mean_cifar = [x / 255 for x in [125.3, 123.0, 113.9]]
 std_cifar = [x / 255 for x in [63.0, 62.1, 66.7]]
+
 transform_train_cifar_miao = transforms.Compose([
     transforms.RandomHorizontalFlip(),
     transforms.RandomCrop(32, padding=4),
     transforms.ToTensor(),
     # 苗师兄源代码归一化注释掉了
-    transforms.Normalize(mean_cifar, std_cifar),
+    # transforms.Normalize(mean_cifar, std_cifar),
 ])
 
 transform_test_cifar_miao = transforms.Compose([
     transforms.ToTensor(),
     # 苗师兄源代码归一化注释掉了
-    transforms.Normalize(mean_cifar, std_cifar),
+    # transforms.Normalize(mean_cifar, std_cifar),
 ])
 
 transform_only_tensor = transforms.Compose(
