@@ -23,7 +23,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--lr", type=float, default=0.05)
 parser.add_argument("--optimizer", default="Adam", help="Adam SGD")
 args = parser.parse_args()
-os.makedirs("../weights_ae", exist_ok=True)
+# os.makedirs("../weights_ae", exist_ok=True)
 # writer = SummaryWriter()
 # writer.add_text("实验描述", f"训练ae,lr={args.lr},optimizer={args.optimizer}")
 torch.set_printoptions(profile="full")
@@ -389,8 +389,9 @@ def chakan_xvniyangben():
 def chachongchonggou():
     # 查看ae重构图像
     model_g = torch.nn.DataParallel(AutoEncoder_Miao().cuda())
-    state_g = torch.load("../results/miao_ae_trainedbywgan/ae_miao__entroloss2.01__lr1e-05__w_weight1e-05__optimAdam__epoch34.pth")
-    model_g.load_state_dict(state_g["model"])
+    root = "../results/train_only_wgan/"
+    print(root)
+    root_ae_list = os.listdir(root)
     trainset = torchvision.datasets.CIFAR10(root="../data/cifar10", train=True, download=False, transform=transform_only_tensor)
     testset = torchvision.datasets.CIFAR10(root="../data/cifar10", train=False, download=False, transform=transform_only_tensor)
     trainloader = DataLoader(trainset, batch_size=16, shuffle=True, num_workers=2)
@@ -399,16 +400,64 @@ def chachongchonggou():
     for idx, (data, label) in enumerate(testloader):
         data = data.cuda()
         label = label.cuda()
-        decoded = model_g(data)
-        data_all = torch.concat([data, decoded], dim=0)
-        img = torchvision.utils.make_grid(data_all)
+        data_show = []
+        for root_ae in root_ae_list:
+            state_g = torch.load(root + root_ae)
+            model_g.load_state_dict(state_g["model"])
+            decoded = model_g(data)
+            virtual = model_g.module.generate_virtual(data)
+            data_all = torch.concat([data, decoded, virtual], dim=0)
+            data_show.append(data_all)
+            print(len(data_show))
+            print(f"{root_ae}")
+            if (len(data_show) ==5):
+                data_show=torch.concat(data_show,dim=0)
+                img = torchvision.utils.make_grid(data_show)
+                img = img.detach().cpu().numpy()
+                img = np.transpose(img, [1, 2, 0])
+                plt.figure()
+                plt.imshow(img)
+                plt.show()
+                data_show=[]
+        data_show = torch.concat(data_show, dim=0)
+        img = torchvision.utils.make_grid(data_show)
         img = img.detach().cpu().numpy()
         img = np.transpose(img, [1, 2, 0])
         plt.figure()
         plt.imshow(img)
         plt.show()
-        if idx == 3:
-            exit()
+        break
+
+
+def jianchadecoder():
+    # 检查encoder和decoder有没有更新
+    model_g = AutoEncoder_Miao().cuda()
+    model_g = torch.nn.DataParallel(model_g)
+    state_g = torch.load("../betterweights/ae_miao_OnlyToTensor--sigmoid--epoch348--loss0.03.pth")
+    model_g.load_state_dict(state_g["model"])
+
+    model_v = torch.nn.DataParallel(AutoEncoder_Miao().cuda())
+    root = "../results/miao_ae_trainedbywgan_v5/"
+    root_ae_list = [
+        "ae_miao__entroloss1.86__wloss0.750372268731081__lr_g2e-05__lr_dis5e-10__w_weight1e-05__epoch372.pth",
+        "ae_miao__entroloss1.86__wloss0.8573868304868287__lr_g2e-05__lr_dis1e-09__w_weight1e-05__epoch323.pth",
+        "ae_miao__entroloss1.87__wloss0.8451150429399708__lr_g2e-05__lr_dis1e-09__w_weight1e-05__epoch304.pth",
+        "ae_miao__entroloss1.88__wloss0.814464937282514__lr_g2e-05__lr_dis1e-09__w_weight1e-05__epoch271.pth",
+        "ae_miao__entroloss1.88__wloss2.6080588052341055e-05__lr_g2e-05__lr_dis2e-09__w_weight10.0__epoch282.pth",
+        "ae_miao__entroloss1.89__wloss0.3549195950544333__lr_g2e-05__lr_dis2e-09__w_weight0.1__epoch341.pth",
+        "ae_miao__entroloss1.89__wloss0.6903962093063548__lr_g2e-05__lr_dis5e-10__w_weight1e-05__epoch245.pth",
+        "ae_miao__entroloss1.89__wloss1.521131035657117e-06__lr_g2e-05__lr_dis2e-09__w_weight100.0__epoch257.pth",
+        "ae_miao__entroloss1.90__wloss0.34114898533760746__lr_g2e-05__lr_dis2e-09__w_weight0.1__epoch295.pth",
+    ]
+    for i in root_ae_list:
+        state_v = torch.load(root + i)
+        model_v.load_state_dict(state_v["model"])
+        x = torch.randn([4, 3, 28, 28]).cuda()
+        e1 = model_g.module.encoder(x)
+        e2 = model_v.module.encoder(x)
+        d1 = model_g.module.decoder(e1)
+        d2 = model_g.module.decoder(e2)
+        print(e1.equal(e2), d1.equal(d2))
 
 
 # tongjizhixindu()
@@ -416,4 +465,5 @@ if __name__ == "__main__":
     pass
     # view_train_generate_virtual_by_add()
     # chakan_xvniyangben()
-    chachongchonggou()
+    chachongchonggou()  # 查看ae重构图像就用这个
+    # jianchadecoder()

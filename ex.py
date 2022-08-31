@@ -1,3 +1,4 @@
+import argparse
 import math
 import os
 
@@ -444,7 +445,7 @@ def draw_cel():
         plt.scatter(x,cel)
     plt.show()
 draw_cel()'''
-
+'''
 #所有pth文件
 import os
 results_root = "../results/train_generate_virtual_by_add"
@@ -459,3 +460,28 @@ for i in a:
 print(list)
 print(len(list))
 # ae_miao_trained_by_add_with_mse_and_cel--mse0.034710--cel1.727.pth
+'''
+
+def jianchammchanshu():
+    '''
+    检查mmc函数
+    '''
+    model_d = getResNet("resnet" + "18").cuda()
+    model_d = torch.nn.DataParallel(model_d)
+    # 不应该拿训练好的模型来训练,应该是重头训练.
+    state_d = torch.load("../betterweights/resnet18--transform_onlyToTensor--epoch199--acc095--loss017.pth")
+    model_d.load_state_dict(state_d["model"])
+
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--epochs", type=int, default=200)
+parser.add_argument("--gpus", default="0")
+parser.add_argument("--batch_size", type=int, default=128)
+parser.add_argument("--use_scheduler", type=str, default="False", help="使用virtual训练discriminator的时候使用动态学习scheduler")
+parser.add_argument("--loss_virtual_weight", type=float, default=1, help="压制训练时候,loss_virtual的权重")
+# 压制训练时生成多少倍数的虚假图像
+parser.add_argument("--virtual_scale", type=int, default=2, help="要多少个0.5倍正常样本数量的 virtual example")
+args = parser.parse_args()
+a=str(args).replace("(","").replace(")","").replace(",","--").replace(" ","").replace("=","")
+print(a)

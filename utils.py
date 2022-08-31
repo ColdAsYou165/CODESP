@@ -13,6 +13,25 @@ import torch.nn.init as init
 import torch
 import torchvision.transforms as transforms
 
+# 数据预处理
+
+# 尽量只用这两个
+mean_cifar = [x / 255 for x in [125.3, 123.0, 113.9]]
+std_cifar = [x / 255 for x in [63.0, 62.1, 66.7]]
+transform_train_cifar_miao = transforms.Compose([
+    transforms.RandomHorizontalFlip(),
+    transforms.RandomCrop(32, padding=4),
+    transforms.ToTensor(),
+    # 苗师兄源代码归一化注释掉了
+    transforms.Normalize(mean_cifar, std_cifar),
+])
+
+transform_test_cifar_miao = transforms.Compose([
+    transforms.ToTensor(),
+    # 苗师兄源代码归一化注释掉了
+    transforms.Normalize(mean_cifar, std_cifar),
+])
+
 transform_only_tensor = transforms.Compose(
     [transforms.ToTensor()])
 transform_only_tensor_train = transforms.Compose(
@@ -81,7 +100,24 @@ def transform_convert(img_tensor, transform):
         return img_tensor
 
 
+# 调整lr
+def adjust_learning_rate(optimizer, lr):
+    '''
+    调整学习率
+    :param optimizer:
+    :param lr:
+    :return:
+    '''
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
+
+
 def weights_init(m):
+    '''
+    权重初始化
+    :param m:
+    :return:
+    '''
     classname = m.__class__.__name__
     if classname.find('Conv') != -1:
         nn.init.normal_(m.weight.data, 0.0, 0.02)
@@ -204,3 +240,51 @@ def format_time(seconds):
     if f == '':
         f = '0ms'
     return f
+
+
+# 最初处理
+def get_args(args):
+    '''
+    :param args:
+    :return: 字符类型的args,且替换掉特殊字符
+    '''
+    return str(args).replace("(", "").replace(")", "").replace(",", "--").replace(" ", "").replace("=", "")
+
+
+# 压制训练用
+def get_mmc(model, loader):
+    '''
+    用于ood数据集,给定model和loader,求mmc
+    '''
+    t0 = time.time()
+    mmc = 0
+    model.eval()
+    with torch.no_grad():
+        for batch, (data, label) in enumerate(loader):
+            data = data.cuda()
+            label = label.cuda()
+            pred = model(data).softmax(dim=1)
+            pred_max = torch.max(pred, dim=1)[0].mean()
+            mmc += pred_max.item()
+    mmc /= len(loader)
+    t1 = time.time()
+    # print(f"耗时{t1 - t0:.2f}")
+    return mmc
+
+
+def get_acc(model, loader):
+    '''
+    用于id数据集,给定模型和loader,求acc
+    '''
+    num = 0
+    acc = 0
+    model.eval
+    with torch.no_grad():
+        for batch, (data, label) in enumerate(loader):
+            data = data.cuda()
+            label = label.cuda()
+            pred = model(data)
+            acc += (torch.argmax(pred, dim=1) == label).int().sum().item()
+            num += len(data)
+    acc /= num
+    return acc

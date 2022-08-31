@@ -8,16 +8,16 @@ import time
 import argparse
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--lr", type=float, default=1e-5, help="model_g的lr")
+parser.add_argument("--lr", type=float, default=0.1, help="model_g的lr")
 parser.add_argument("--optimizer", default="Adam", help="Adam SGD")
-parser.add_argument("--epochs", type=int, default=300)
+parser.add_argument("--epochs", type=int, default=250)
 parser.add_argument("--gpus", default="0,1")
-parser.add_argument("--batch_size", type=int, default=16)
+parser.add_argument("--batch_size", type=int, default=128)
 parser.add_argument("--need_fixed", type=bool, default=False)
 parser.add_argument("--set_only_two_classes", type=bool, default=False, help="只使用两个类别")
 parser.add_argument("--fixedid", type=int, default=1)
 parser.add_argument("--loss", default="crossentropyloss", help="l1loss crossentropyloss")
-parser.add_argument("--use_scheduler", type=bool, default=False, help="使用virtual训练discriminator的时候使用动态学习scheduler")
+parser.add_argument("--use_scheduler", type=str, default="False", help="使用virtual训练discriminator的时候使用动态学习scheduler")
 parser.add_argument("--wgan_optim", default="Adam", help="wgan中优化器的选择,推荐使用RMSprop,而不是Adam")  # 但我们用的不是完整的gan
 # crossentropyloss 和 mseloss 联合训练 ae
 parser.add_argument("--mse_loss_weight", type=float, default=1, help="crossentropyloss 和 mseloss 联合训练 ae,其中mse的权重,default1")
@@ -28,10 +28,19 @@ parser.add_argument('--beta1', type=float, default=0.5, help='beta1 for adam. de
 parser.add_argument('--w_loss_weight', type=float, default=1e-5, help='wloss上加的权重,苗师兄wgan是1e-5')
 parser.add_argument("--set_sigmoid", type=bool, default=True, help="wgan的dis是否需要sigmoid")
 parser.add_argument("--d_loss_real_weight", type=float, default=1, help="实验发现,经过训练dis输入real fake 的输出都为1,说明fake太厉害了,所以real乘以个权重")
+parser.add_argument("--loss_virtual_weight", type=float, default=1, help="压制训练时候,loss_virtual的权重")
 # 压制训练时生成多少倍数的虚假图像
 parser.add_argument("--virtual_scale", type=int, default=2, help="要多少个0.5倍正常样本数量的 virtual example")
 args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus
+
+if args.use_scheduler == "False":
+    args.use_scheduler = False
+elif args.use_scheduler == "True":
+    args.use_scheduler = True
+else:
+    print("use_scheduler参数错误")
+    exit()
 print(str(args))
 import torch
 import torchvision
@@ -43,6 +52,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
+from torchvision.utils import save_image
 # import torch.backends.cudnn as cudnn
 import sys
 from model import *
@@ -352,6 +362,8 @@ def train_generate_virtual_with_WGAN():
     '''
     引入w距离,和分类器 一起训练ae生成virtual example的能力
     w距离并不是完全的w距离,要加上sigmoid,这样wgan的discrimnitor容易优化.
+
+    v2:我犯了一个低级错误,可是我现在才意识到.我应该用苗师兄简单的discriminator,而不应该是resnet18.
     :return:
     '''
     results_root = "../results/miao_ae_trainedbywgan"
@@ -388,9 +400,9 @@ def train_generate_virtual_with_WGAN():
     model_d.eval()
     one = torch.tensor(1).float().cuda()
     print("training...")
+    min_test = 1.9
     for epoch in range(epochs):
         # batch_size=16的时候5min train一轮
-        min_test = 3
         loss_all_discriminator_real = 0  # 分类器在正常样本的loss,对正常样本识别正确的概率
         loss_all_discriminator_vir = 0  # 分类器在虚假样本的loss,对虚假样本识别正确的概率
         loss_all_w = 0  # 整体的wloss,希望我们生成的virtual的wloss越低越好,说明越像真实样本分布
@@ -606,6 +618,11 @@ def observe_ood_mmc():
     state_g=torch.load("../betterweights/ae_miao_OnlyToTensor--sigmoid--epoch348--loss0.03.pth")
     model_g.load_state_dict(state_g["model"])
     '''
+    from models import resnet_orig
+    model_d = resnet_orig.ResNet18(num_classes=10).cuda()
+    model_d = torch.nn.DataParallel(model_d)
+    state_d = torch.load("../betterweights/miao_resnet18_baseline.pth")
+    model_d.load_state_dict(state_d)
     # 先测试下原始的resnet18在各个数据集上的mmc
     cifar100_train = torchvision.datasets.CIFAR100(root="../data/cifar100", train=True, download=False,
                                                    transform=transform_only_tensor)
@@ -625,13 +642,18 @@ def observe_ood_mmc():
     trainloader_cifar10 = DataLoader(cifar10_train, batch_size=args.batch_size, shuffle=True, num_workers=2)
     testloader_cifar10 = DataLoader(cifar10_test, batch_size=args.batch_size, shuffle=True, num_workers=2)
     # mmc_cifar100
-    # mmc_cifar100 = get_mmc(model_d, testloader_cifar100)
-    # print(f"mmc_cifar100={mmc_cifar100}")
+    mmc_cifar100 = get_mmc(model_d, testloader_cifar100)
+    print(f"mmc_cifar100={mmc_cifar100}")
     # mmc_svhn
-    # mmc_svhn = get_mmc(model_d, testloader_svhn)
-    # print(f"mmc_svhn={mmc_svhn}")
+    mmc_svhn = get_mmc(model_d, testloader_svhn)
+    print(f"mmc_svhn={mmc_svhn}")
+    # mmc_cifar10
     mmc_cifar10 = get_mmc(model_d, testloader_cifar10)
-    print(mmc_cifar10)
+    print(f"mmc_cifar10={mmc_cifar10}")
+    acc_cifar10 = get_acc(model_d, testloader_cifar10)
+    print(f"acc_cifar10_test{acc_cifar10}")
+    acc_cifar10 = get_acc(model_d, trainloader_cifar10)
+    print(f"acc_cifar10_train={acc_cifar10}")
 
 
 def get_virtual_example(model_g=model_g, data=None, scale=2):
@@ -655,36 +677,42 @@ def train_discriminator_by_virtual():
     拿虚拟样本和正常样本训练discriminator
     生成虚假样本的方式:两张通过反转卷积
     v2:我们的目标是观察在ood数据集上的mmc有没有降下来
+    v3: 加一个权重压制训练
     进一步提升
     :return:
     '''
     print(str(args))
     writer = SummaryWriter()
     writer.add_text("args", str(args))
-    results_root = "../results/train_discriminator_by_virtual"
+    # v0是chamferloss和wloss训练的ae的压制训练
+    # v1用了苗师兄sgd优化器
+    # v2用了 3loss训练的
+    # transform 按照transform_train_cifar_miao
+    results_root = "../results/train_discriminator_by_virtual_v4"
     os.makedirs(results_root, exist_ok=True)
     # 模型
     model_d = getResNet("resnet" + "18").cuda()
     model_d = torch.nn.DataParallel(model_d)
-    state_d = torch.load("../betterweights/resnet18--transform_onlyToTensor--epoch199--acc095--loss017.pth")
-    model_d.load_state_dict(state_d["model"])
-
+    # 不应该拿训练好的模型来训练,应该是重头训练.
+    # state_d = torch.load("../betterweights/resnet18--transform_onlyToTensor--epoch199--acc095--loss017.pth")
+    # model_d.load_state_dict(state_d["model"])
+    model_d.apply(weights_init)
     model_g = AutoEncoder_Miao().cuda()
     model_g = torch.nn.DataParallel(model_g)
-    state_g = torch.load("../betterweights/modelmiao_generatevirtual0__epoch103__lr0.0001__batch256__loss1.47.pth")  # 没有引入wgan训练的ae
+    state_g = torch.load("../betterweights/pthmodel_chamfer_and_wloss--epoch299--crossweight0.001.pth")  # chamferloss
     # state_g = torch.load("../betterweights/ae_miao__epoch234__w_weight0.001__entroloss1.97.pth")  # 引入wgan训练的ae
     model_g.load_state_dict(state_g["model"])
     model_g.eval()
-
-    optimizer_d = torch.optim.Adam(model_d.parameters(), lr=args.lr)
+    # optimizer_d = torch.optim.Adam(model_d.parameters(), lr=args.lr)#
+    optimizer_d = torch.optim.SGD(model_d.parameters(), lr=args.lr, momentum=0.9, weight_decay=1e-4)  # 苗lr0.1
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_d, T_max=200)
     # 数据集
-    cifar10_train = torchvision.datasets.CIFAR10(root="../data/cifar10", train=True, download=False, transform=transform_only_tensor)
-    cifar10_test = torchvision.datasets.CIFAR10(root="../data/cifar10", train=False, download=False, transform=transform_only_tensor)
-    cifar100_train = torchvision.datasets.CIFAR100(root="../data/cifar100", train=True, download=False, transform=transform_only_tensor)
-    cifar100_test = torchvision.datasets.CIFAR100(root="../data/cifar100", train=False, download=False, transform=transform_only_tensor)
-    svhn_train = torchvision.datasets.SVHN(root="../data/svhn", split="train", download=False, transform=transform_only_tensor)
-    svhn_test = torchvision.datasets.SVHN(root="../data/svhn", split="test", download=False, transform=transform_only_tensor)
+    cifar10_train = torchvision.datasets.CIFAR10(root="../data/cifar10", train=True, download=False, transform=transform_train_cifar_miao)
+    cifar10_test = torchvision.datasets.CIFAR10(root="../data/cifar10", train=False, download=False, transform=transform_test_cifar_miao)
+    cifar100_train = torchvision.datasets.CIFAR100(root="../data/cifar100", train=True, download=False, transform=transform_train_cifar_miao)
+    cifar100_test = torchvision.datasets.CIFAR100(root="../data/cifar100", train=False, download=False, transform=transform_test_cifar_miao)
+    svhn_train = torchvision.datasets.SVHN(root="../data/svhn", split="train", download=False, transform=transform_train_cifar_miao)
+    svhn_test = torchvision.datasets.SVHN(root="../data/svhn", split="test", download=False, transform=transform_test_cifar_miao)
 
     trainloader_cifar10 = torch.utils.data.DataLoader(cifar10_train, batch_size=args.batch_size, shuffle=True, num_workers=2)
     testloader_cifar10 = torch.utils.data.DataLoader(cifar10_test, batch_size=args.batch_size, shuffle=True, num_workers=2)
@@ -692,10 +720,6 @@ def train_discriminator_by_virtual():
     testloader_cifar100 = torch.utils.data.DataLoader(cifar100_test, batch_size=args.batch_size, shuffle=True, num_workers=2)
     trainloader_svhn = torch.utils.data.DataLoader(svhn_train, batch_size=args.batch_size, shuffle=True, num_workers=2)
     testloader_svhn = torch.utils.data.DataLoader(svhn_test, batch_size=args.batch_size, shuffle=True, num_workers=2)
-    # 训练和测试
-    # origin_mmc_cifar100 = get_mmc(model_d, testloader_cifar100)
-    # origin_mmc_svhn = get_mmc(model_d, testloader_svhn)
-    # print(f"origin_mmc_cifar100={origin_mmc_cifar100},origin_mmc_svhn={origin_mmc_svhn}")
     # 记录起初的mmc
     mmc_cifar100 = get_mmc(model_d, testloader_cifar100)
     mmc_svhn = get_mmc(model_d, testloader_svhn)
@@ -703,7 +727,19 @@ def train_discriminator_by_virtual():
     writer.add_scalars("loss", {"mmc_cifar100": mmc_cifar100, "mmc_svhn": mmc_svhn}, 0)
     writer.add_scalar("cifar10_acc", acc, 0)
     print(f"压制训练前:acc:{acc},mmc_cifar100={mmc_cifar100},mmc_svhn={mmc_svhn}")
+    acc_std = 0.80
     for epoch in range(args.epochs):
+        # lr 2e-2 提高的多 但是只能到0.86
+        # 苗调整学习率
+        lr = 1e-1
+        if epoch >= 60:
+            lr = 2e-2
+        if epoch >= 120:
+            lr = 4e-3
+        if epoch >= 160:
+            lr = 8e-4
+        adjust_learning_rate(optimizer_d, lr)
+
         # 训练
         model_d.train()
         loss_train_containv = 0
@@ -716,12 +752,14 @@ def train_discriminator_by_virtual():
             # 压制训练时候,虚假样本的label应该都是0.1,我设置错了.
             # label_virtual = (torch.ones([int(len(label) / 2), 10]) * 0.1).cuda().detach()
             data_virtual, label_virtual = get_virtual_example(model_g=model_g, data=data, scale=args.virtual_scale)
-            data_all = torch.concat([data_normal, data_virtual], dim=0).detach()
-            label_all = torch.concat([label_normal, label_virtual], dim=0).detach()
-            pred = model_d(data_all)
-            loss = criterion(pred, label_all)
+            pred_normal = model_d(data_normal)
+            loss_normal = criterion(pred_normal, label)
+            pred_virtual = model_d(data_virtual)
+            loss_virtual = criterion(pred_virtual, label_virtual)
+            loss = (loss_virtual + loss_normal).mean()
             optimizer_d.zero_grad()
-            loss.backward()
+            loss_normal.backward()
+            (args.loss_virtual_weight * loss_virtual).backward()
             optimizer_d.step()
             if args.use_scheduler:
                 scheduler.step()
@@ -730,23 +768,20 @@ def train_discriminator_by_virtual():
         # 测试
         mmc_cifar100 = get_mmc(model_d, testloader_cifar100)
         mmc_svhn = get_mmc(model_d, testloader_svhn)
+        mmc_cifar10 = get_mmc(model_d, testloader_cifar10)
         acc = get_acc(model_d, testloader_cifar10)
-        '''loss_test = 0
-        acc_test = 0
-        with torch.no_grad():
-            for batch, (data, label) in enumerate(testloader):
-                data = data.cuda()
-                label = label.cuda()
-                pred = model_d(data)
-                loss = criterion(pred, label)
-                loss_test += loss.item()
-                acc_test += (torch.argmax(pred, dim=1) == label).int().sum().item()
-        loss_test /= len(testloader)
-        acc_test /= len(testset)'''
-        writer.add_scalars("loss", {"train_containv": loss_train_containv, "mmc_cifar100": mmc_cifar100, "mmc_svhn": mmc_svhn}, epoch + 1)
+        if acc > acc_std:
+            acc_std = acc
+            state_d = {"model": model_d.state_dict()}
+            torch.save(state_d, f"{results_root}/resnet18_yazhixunlian__acc{acc:.2f}__cimmc{mmc_cifar100:.2f}__svhnmmc{mmc_svhn}.pth")
+        writer.add_scalars("loss", {"mmc_test_cifar10": mmc_cifar10, "mmc_cifar100": mmc_cifar100,
+                                    "mmc_svhn": mmc_svhn}, epoch + 1)
         writer.add_scalar("cifar10_acc", acc, epoch + 1)
-        print(f"cifar10_test_acc={acc}")
-        print(f"epoch[{epoch}/{epochs}]", "loss_train_containv", loss_train_containv, "mmc_cifar100", mmc_cifar100, "mmc_svhn", mmc_svhn)
+        writer.add_scalar("train_containv", loss_train_containv, epoch + 1)
+
+        print(f"epoch[{epoch}/{epochs}] : cifar10_test_acc={acc} , ", "mmc_test_cifar10", mmc_cifar10)
+        print("loss_train_containv=", loss_train_containv, "mmc_cifar100", mmc_cifar100, " , mmc_svhn", mmc_svhn)
+        print("-" * 40)
 
 
 def get_virtual_example_by_add(model_g, data, scale):
@@ -839,7 +874,8 @@ def train_discriminator_by_virtual_ae_genenrate_by_add():
             label_normal = F.one_hot(label, num_classes).detach()
             # 压制训练时候,虚假样本的label应该都是0.1,我设置错了.
             data_virtual, label_virtual = get_virtual_example_by_add(model_g=model_g, data=data, scale=args.virtual_scale)
-
+            if batch == 30:
+                save_image(data_virtual, results_root + f"/virtual.jpg")
             # 下面这两行是拿正常样本和虚假样本混在一起训练
             # data_all = torch.concat([data_normal, data_virtual], dim=0).detach()
             # label_all = torch.concat([label_normal, label_virtual], dim=0).detach()
@@ -868,8 +904,6 @@ def train_discriminator_by_virtual_ae_genenrate_by_add():
         print(f"epoch[{epoch}/{epochs}]", "loss_train_containv", loss_train_containv, "mmc_cifar100", mmc_cifar100, "mmc_svhn", mmc_svhn)
 
 
-# ae_miao__epoch234__w_weight0.001__entroloss1.97.pth#通过wgan训练的不成功的ae
-
 if __name__ == "__main__":
     pass
     # testDiscriminator() #测试分类器acc和loss,证明没有问题.
@@ -877,7 +911,10 @@ if __name__ == "__main__":
     # debug_reallabel() #我怀疑我标签给错了,所以会有这个函数
     # observe_virtual()  # 观察检查ae生成的virtual图像长什么样子
     # train_discriminator_by_virtual()  # 最简单的方法,尝试用生成的virtual example来训练discriminator
-    train_generate_virtual_with_WGAN()  # 引入w距离训练ae生成虚假样本
-    # observe_ood_mmc()  # 计算分类器模型在ood数据集上的mmc
-    # train_discriminator_by_virtual()  # 看看引入训练后ood mmc有没有降低
+    # train_generate_virtual_with_WGAN()  # 引入w距离训练ae生成虚假样本
+    observe_ood_mmc()  # 计算分类器模型在ood数据集上的mmc
+    # train_discriminator_by_virtual()  # 看看压制训练后ood mmc有没有降低
     # train_generate_virtual_by_add()  # 通过特征层相加生成虚假样本
+# genziji concat 自己跟自己拼接出来
+# wgan
+# 1. 加chamferloss n*c 2n*c 权重一样 wloss chamferloss 退化:只想其中一种

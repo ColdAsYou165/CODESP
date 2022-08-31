@@ -673,7 +673,7 @@ class AutoEncoder_Miao(nn.Module):
         x = self.ct8(x)
         return x
 
-    def generate_virtual(self, x):
+    def generate_virtual(self, x, set_detach=False):
         '''
         :param x:一个batch的图像样本,batch必须为整数
         :return: batch/2 个生成的虚假图像
@@ -681,7 +681,9 @@ class AutoEncoder_Miao(nn.Module):
         # 不需要顾及z的batch不是偶数的情况,dataset是偶数,batchsize是偶数,所以batch一定是偶数
         '''
         z = self.encoder(x)  # [batch, 64, 8, 8]
-        z = z.reshape(-1, z.shape[1] * 2, z.shape[2], z.shape[3]).detach()
+        z = z.reshape(-1, z.shape[1] * 2, z.shape[2], z.shape[3])
+        if set_detach:
+            z = z.detach()
         virtual = self.decoder_virtual(z)
         return virtual
 
@@ -743,10 +745,150 @@ class ResNet_sigmoid(nn.Module):
         return out
 
 
+class Discriminator_WGAN_miao_cifar10(nn.Module):
+    '''
+    苗师兄wgan的discriminator,用于数据集 cifar10,cifar100,svhn
+    这个没有接sigmoid,很是奇怪,mnist接sigmoid了 --- 实验发现,接了sigmoid要好一些.
+    --实验结果: 效果不好,猜测是discriminator太强了.
+    '''
+
+    def __init__(self, set_sigmoid=False, ngpu=1):
+        '''
+        :param set_sigmoid: 最后的输出是否接sigmoid
+        '''
+        super(Discriminator_WGAN_miao_cifar10, self).__init__()
+        nc = 3
+        ndf = 32
+        self.ngpu = ngpu
+        self.main = nn.Sequential(
+            # input is (nc) x 64 x 64  32
+            nn.Conv2d(nc, ndf, 4, 2, 1, bias=False),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf) x 32 x 32  16
+            nn.Conv2d(ndf, ndf * 2, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ndf * 2),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*2) x 16 x 16 8
+            nn.Conv2d(ndf * 2, ndf * 4, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ndf * 4),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*4) x 8 x 8 4
+            # nn.Conv2d(ndf * 4, ndf * 8, 4, 2, 1, bias=False),
+            # nn.BatchNorm2d(ndf * 8),
+            # nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*8) x 4 x 4
+            nn.Conv2d(ndf * 4, 1, 4, 1, 0, bias=False),
+
+        )
+        self.set_sigmoid = set_sigmoid
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, input):
+        # if input.is_cuda and self.ngpu > 1:
+        #     output = nn.parallel.data_parallel(self.main, input, range(self.ngpu))
+        # else:
+        output = self.main(input)
+        if self.set_sigmoid:
+            output = self.sigmoid(output)
+        # print('-----------------------------')
+        # print(output.shape)
+        output = output.mean(0)
+        # return output.view(-1, 1).squeeze(1)
+        return output.view(1)
+
+
+class simple_ae(nn.Module):
+    '''
+    wgan调通了的生成器
+    '''
+
+    def __init__(self):
+        latent_size = 64
+        n_channel = 3
+        n_g_feature = 64
+        super(simple_ae, self).__init__()
+        # encoder
+        self.c1 = nn.Sequential(nn.Conv2d(3, 64, 4, 2, 1), nn.BatchNorm2d(64), nn.ReLU())
+        self.c2 = nn.Sequential(nn.Conv2d(64, 128, 4, 2, 1), nn.BatchNorm2d(128), nn.ReLU())
+        self.c3 = nn.Sequential(nn.Conv2d(128, 256, 4, 2, 1), nn.BatchNorm2d(256), nn.ReLU())
+        self.c4 = nn.Sequential(nn.Conv2d(256, 64, 4, 1, 0), nn.BatchNorm2d(64), nn.ReLU())
+
+        # dncoder
+        self.ct1 = nn.Sequential(nn.ConvTranspose2d(64, 4 * 64, kernel_size=4, bias=False),
+                                 nn.BatchNorm2d(4 * 64),
+                                 nn.ReLU())
+        self.ct2 = nn.Sequential(nn.ConvTranspose2d(4 * 64, 2 * 64, kernel_size=4, stride=2, padding=1, bias=False),
+                                 nn.BatchNorm2d(2 * 64),
+                                 nn.ReLU())
+        self.ct3 = nn.Sequential(nn.ConvTranspose2d(2 * 64, 64, kernel_size=4, stride=2, padding=1, bias=False),
+                                 nn.BatchNorm2d(64),
+                                 nn.ReLU())
+        self.ct4 = nn.Sequential(nn.ConvTranspose2d(64, n_channel, kernel_size=4, stride=2, padding=1),
+                                 nn.Sigmoid())
+
+    def encoder(self, x):
+        x = self.c1(x)  # 64, 16, 16
+        x = self.c2(x)  # 128, 8, 8
+        x = self.c3(x)  # 256, 4, 4
+        x = self.c4(x)  # 64, 1, 1
+        return x
+
+    def decoder(self, z):
+        # z [b,latensize=64,1,1]
+        z = self.ct1(z)  # 256 4 4
+        z = self.ct2(z)  # 128, 8, 8
+        z = self.ct3(z)  # 64, 16, 16
+        z = self.ct4(z)  # 3, 32, 32
+        return z
+
+    def forward(self, x):
+        encoded = self.encoder(x)
+        decoded = self.decoder(encoded)
+        return decoded
+
+
+class simple_discriminator(nn.Module):
+    '''
+    简单discriminator,源码没有接sigmoid,我尝试加sigmoid之后直接完蛋.
+    '''
+    def __init__(self):
+        super(simple_discriminator, self).__init__()
+        n_d_feature = 64
+        n_channel = 3
+        self.dis = nn.Sequential(
+            nn.Conv2d(n_channel, n_d_feature, kernel_size=4, stride=2, padding=1),
+            nn.LeakyReLU(0.2),
+
+            nn.Conv2d(n_d_feature, 2 * n_d_feature, kernel_size=4, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(2 * n_d_feature),
+            nn.LeakyReLU(0.2),
+
+            nn.Conv2d(2 * n_d_feature, 4 * n_d_feature, kernel_size=4, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(4 * n_d_feature),
+            nn.LeakyReLU(0.2),
+
+            nn.Conv2d(4 * n_d_feature, 1, kernel_size=4)
+        )
+
+    def forward(self, x):
+        x = self.dis(x)
+        return x
+
+
 if __name__ == "__main__":
     # test()
     # getResNet("1")
-    model = ResNet18_sigmoid()
-    x = torch.randn([16, 3, 32, 32])
-    pred = model(x)
-    print(pred)
+    import os
+
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    # model = simple_ae().cuda()
+    # for batch in range(1):
+    #     x = torch.randn([16, 3, 32, 32]).cuda()
+    #     pred = model.encoder(x)
+    #     print(pred.shape)
+    #     decoded = model.decoder(pred)
+    #     print(decoded.shape)
+    model=simple_discriminator()
+    x=torch.randn([32,3,32,32])
+    y=model(x).reshape(-1)
+    print(y.shape)

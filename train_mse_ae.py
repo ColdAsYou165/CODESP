@@ -4,14 +4,16 @@
 '''
 
 import argparse
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--lr", type=float, default=0.0006)
 parser.add_argument("--optimizer", default="Adam", help="Adam SGD")
 parser.add_argument("--begin_epoch", type=int, default=0)
 parser.add_argument("--epoch", type=int, default=300)
-parser.add_argument("--gpus", default="0,1")
+parser.add_argument("--gpus", default="0")
 args = parser.parse_args()
 import os
+
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus
 from utils import *
 import torch
@@ -25,35 +27,25 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 # import torch.backends.cudnn as cudnn
 import sys
-from model import getResNet, AutoEncoder
+from model import *
 
-
-root_weights="../weights_bce_ae"
+root_weights = "../weights_bce_ae"
 os.makedirs(root_weights, exist_ok=True)
 writer = SummaryWriter()
 writer.add_text("实验描述", f"使用bce训练自己的ae,lr={args.lr},optimizer={args.optimizer}")
+print(str(args))
 torch.set_printoptions(profile="full")
 # 数据集
-transform_train = transforms.Compose([
-    transforms.RandomCrop(32, padding=4),
-    transforms.RandomHorizontalFlip(),
-    transforms.ToTensor(),
-    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-])
-transform_test = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-])
 num_classes = 10
 batch_size = 128
 epochs = 200
 lr = args.lr
 # [, 3, 32, 32]
 
-trainset = torchvision.datasets.CIFAR10(root='../data', train=True,
-                                        download=False, transform=transform_train)
-testset = torchvision.datasets.CIFAR10(root='../data', train=False,
-                                       download=False, transform=transform_test)
+trainset = torchvision.datasets.CIFAR10(root='../data/cifar10', train=True,
+                                        download=False, transform=transform_only_tensor)
+testset = torchvision.datasets.CIFAR10(root='../data/cifar10', train=False,
+                                       download=False, transform=transform_only_tensor)
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
                                           shuffle=True, num_workers=2)
 
@@ -63,16 +55,9 @@ testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
 classes = ('plane', 'car', 'bird', 'cat',
            'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 # 模型
-model_d = getResNet("resnet" + "18").cuda()
-model_d = torch.nn.DataParallel(model_d)
-state = torch.load(f"../betterweights/resnet18--epoch199.pth")  # model acc epoch
-model_d.load_state_dict(state["model"])
 
-model_g = AutoEncoder().cuda()
+model_g = simple_ae().cuda()
 model_g = torch.nn.DataParallel(model_g)
-
-
-
 
 # 只有从0开始训练的时候,才需要初始化权重
 if args.begin_epoch == 0:
@@ -111,8 +96,8 @@ for epoch in range(args.begin_epoch, args.epoch, 1):
             loss = criterion(outs, data)
             loss_test += loss.item()
     loss_test /= len(testloader)
-    writer.add_scalars("mse_ae_loss", {"train": loss_train, "test": loss_test},epoch)
+    writer.add_scalars("mse_ae_loss", {"train": loss_train, "test": loss_test}, epoch)
     print(f"epoch{epoch},train_loss={loss_train},test_loss={loss_test}")
-    state={"model":model_g.state_dict(),"loss":loss_test,"epoch":epoch}
-    torch.save(state,root_weights+f"/ae__epoch{epoch}__lr{lr}.pth")
+    state = {"model": model_g.state_dict(), "loss": loss_test, "epoch": epoch}
+    torch.save(state, root_weights + f"/ae__epoch{epoch}__lr{lr}__mseloss{loss_test}.pth")
     scheduler_g.step()
